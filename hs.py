@@ -4,7 +4,9 @@ import sys
 import cgi
 import uuid
 import json
+import time  # just for stubs
 import socket
+import base64
 import logging
 from http.server import HTTPServer
 from http.server import BaseHTTPRequestHandler
@@ -35,10 +37,17 @@ class TunnelHandler(BaseHTTPRequestHandler):
         self._json_send(d)
 
     def _send(self, obj):
+        logging.debug("Forwarded TX: {0}".format(obj))
         self._json_send(dict(status='ok'))
 
     def _receive(self, obj):
-        d = dict(status='ok')
+        logging.debug("Polled RX: {0}".format(obj))
+        d = dict( status='ok'
+                , channel=obj['channel']
+                , rx=False
+                , data=base64.encodebytes(b'').decode('ascii')
+                )
+        time.sleep(0.5)
         self._json_send(d)
 
     def _communicate_main(self):
@@ -49,7 +58,7 @@ class TunnelHandler(BaseHTTPRequestHandler):
             call = self._send
             self._LOG.debug("send")
         elif self.path == '/receive':
-            call = self._recveive
+            call = self._receive
             self._LOG.debug("receive")
         else:
             return self._reject()
@@ -82,6 +91,9 @@ class TunnelHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         return self._reject()
+
+    def log_message(self, format, *args):
+        return
 
 
 class HTTPServerIPv6(HTTPServer):
