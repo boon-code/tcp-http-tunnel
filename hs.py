@@ -18,6 +18,7 @@ logging.basicConfig(stream=sys.stderr, format=_DEFAULT_LOG_FORMAT, level=logging
 
 class TunnelHandler(BaseHTTPRequestHandler):
     _LOG = logging.getLogger("TunnelHandler")
+    BLA = 0
 
     def _reject(self, code=400):
         self.send_response(code)
@@ -48,6 +49,14 @@ class TunnelHandler(BaseHTTPRequestHandler):
                 , data=base64.encodebytes(b'').decode('ascii')
                 )
         time.sleep(0.5)
+        TunnelHandler.BLA += 1
+        if (TunnelHandler.BLA % 5) == 0:
+            d['rx'] = True
+            msg = 'BLA: {0}'.format(TunnelHandler.BLA)
+            d['data'] = base64.encodebytes(msg.encode('utf-8')).decode('ascii')
+        if TunnelHandler.BLA > 30:
+            d['rx'] = True
+            d['close'] = True
         self._json_send(d)
 
     def _communicate_main(self):
