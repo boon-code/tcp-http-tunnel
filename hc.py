@@ -86,13 +86,14 @@ class Client(object):
             logging.debug("Wrong channel received: {0}".format(obj['channel']))
             rx = False
         if obj['rx']:
-            dec_data = base64.decodebytes(obj['data'].decode('ascii'))
+            dec_data = base64.decodebytes(obj['data'].encode('ascii'))
             return dec_data, True
         else:
             return b'', False
 
     def _readloop(self):  # HTTP read requests (socket send)
         rseq = 0
+        err_counter = 0
         final = False
         while not final:
             if self._shutdown.is_set():
@@ -101,9 +102,14 @@ class Client(object):
                     final = True
             try:
                 data, rx = self._poll_receive(rseq, final=final)
+                err_counter = 0
             except: # find exceptions
                 logging.exception("Failed to receive data")
                 rx = False
+                err_counter += 1
+                if err_counter > 5:
+                    logging.debug("5 consecutive errors -> abort")
+                    return
             if rx:
                 if data == b'':
                     logging.info("Poll received close request")
@@ -139,6 +145,7 @@ class Client(object):
                     wseq += 1
                 except: # find exceptions
                     logging.exception("Failed to send data")
+                    return
 
     def process(self):
         #TODO: Think about this...
