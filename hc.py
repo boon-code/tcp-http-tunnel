@@ -19,6 +19,8 @@ class ClientController(object):
     def __init__(self):
         self._url = None
         self._url_set_ev = threading.Event()
+        self._lock = threading.RLock()
+        self._handler = set()
 
     def setURL(self, url):
         self._url = url
@@ -27,6 +29,20 @@ class ClientController(object):
     def getURL(self):
         self._url_set_ev.wait()
         return self._url
+
+    def addClient(self, client):
+        with self._lock:
+            self._handler.add(client)
+
+    def removeClient(self, client):
+        with self._lock:
+            self._handler.discard(client)
+
+    def stopAll(self, wait=True):
+        with self._lock:
+            for hdlr in self._handler:
+                hdlr.shutdown(wait=wait)
+            self._handler = set() # remove all
 
 
 class Client(object):
@@ -40,9 +56,10 @@ class Client(object):
         self._rq = queue.Queue()
         self._wq = queue.Queue()
         self._shutdown = threading.Event()
+        self._stopped = threading.Event()
         self._channel = self._connect()
         self._reader = threading.Thread(target=self._readloop)
-        self._writer = threading.Thread(target=self._writeloop)
+        self._reader.start()
 
     def _connect(self):
         d = dict(chin=str(uuid.uuid4()))
@@ -51,25 +68,57 @@ class Client(object):
         obj = r.json()
         return obj['channel']
 
-    def shutdown(self):
+    def shutdown(self, wait=True):
         self._shutdown.set()
+        self._stopped.wait()
 
-    def write(self, data):
-        d = dict(data=data, seq=self._wseq)
-        self._wseq += 1
-        self._wg.put(d)
-
-    def read(self):
-        return self._rq.get()
+    def _poll_receive(self, sequence, final=False):
+        d = dict( sequence=sequence
+                , channel=self._channel
+                )
+        if final:
+            d['close'] = True
+        r = requests.post("{0}/receive".format(self._url), json=d)
+        r.raise_for_status()
+        obj = r.json()
+        rx = True
+        if obj['channel'] != self._channel:
+            logging.debug("Wrong channel received: {0}".format(obj['channel']))
+            rx = False
+        if obj['rx']:
+            dec_data = base64.decodebytes(obj['data'].decode('ascii'))
+            return dec_data, True
+        else:
+            return b'', False
 
     def _readloop(self):  # HTTP read requests (socket send)
         rseq = 0
-        while not self._shutdown.is_set():
-            pass
+        final = False
+        while not final:
+            if self._shutdown.is_set():
+                if not final:
+                    logging.info("Poll receiver: prepare final request")
+                    final = True
+            try:
+                data, rx = self._poll_receive(rseq, final=final)
+            except: # find exceptions
+                logging.exception("Failed to receive data")
+                rx = False
+            if rx:
+                if data == b'':
+                    logging.info("Poll received close request")
+                    return
+                logging.debug("Poll receive: {0}".format(data))
+                self._sock.send(data)
+                rseq += 1
+        logging.debug("Poll receiver: closed")
 
     def _forward_send(self, data, sequence):
         enc_data = base64.encodebytes(data).decode('ascii')
-        d = dict(data=enc_data, sequence=sequence)
+        d = dict( data=enc_data
+                , sequence=sequence
+                , channel=self._channel
+                )
         r = requests.post("{0}/send".format(self._url), json=d)
         r.raise_for_status()
 
@@ -84,7 +133,7 @@ class Client(object):
                 logging.info("Close request from client socket")
                 return
             else:
-                logging.debug("Got data: {0}".format(data))
+                logging.debug("Forward send: {0}".format(data))
                 try:
                     self._forward_send(data, wseq)
                     wseq += 1
@@ -94,7 +143,11 @@ class Client(object):
     def process(self):
         #TODO: Think about this...
         self._writeloop()
-        # JOIN other thread
+        # TODO: Find a better solution
+        self._shutdown.set()
+        # TODO: trigger shutdown after a fixed timeout
+        self._reader.join()
+        self._stopped.set()
 
 
 class ClientInHandler(socketserver.BaseRequestHandler):
@@ -112,18 +165,14 @@ class ClientInHandler(socketserver.BaseRequestHandler):
             return self.on_close()
         self._LOG.info("Connect to server: {0}".format(ctrl.getURL()))
         conn = Client(ctrl.getURL(), self.request)
+        ctrl.addClient(conn)
         self._LOG.debug("Start processing data from {0}".format(self.client_address))
         try:
             conn.process()
         except KeyboardInterrupt:
             conn.shutdown()
-            self.request.close()
-#        while True:
-#            data = self.request.recv(self.RX_SIZE)
-#            if data == b'':
-#                return self.on_close()
-#            else:
-#                self._LOG.debug("RX (size={1}): {0}".format(data, len(data)))
+            self.on_close()
+        ctrl.removeClient(conn)
 
     def on_close(self):
         self.request.close()
@@ -140,9 +189,15 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 def clientMain():
+    logging.getLogger("requests").setLevel(logging.WARNING)
     server = ThreadedTCPServer(('::', 7000), ClientInHandler)
     server.ctrl.setURL('http://127.0.0.1:7080')
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        logging.info("Stopping clients")
+        server.ctrl.stopAll()
+        logging.info("Stopped")
 
 
 if __name__ == '__main__':
