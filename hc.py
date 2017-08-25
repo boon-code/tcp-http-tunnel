@@ -115,7 +115,7 @@ class Client(object):
                     logging.info("Poll received close request")
                     return
                 logging.debug("Poll receive: {0}".format(data))
-                self._sock.send(data)
+                self._sock.sendall(data)
                 rseq += 1
         logging.debug("Poll receiver: closed")
 
@@ -137,7 +137,7 @@ class Client(object):
                 continue
             if data == b'':
                 logging.info("Close request from client socket")
-                return
+                return self._forward_send(data, wseq) # exit
             else:
                 logging.debug("Forward send: {0}".format(data))
                 try:
@@ -148,7 +148,7 @@ class Client(object):
                     return
 
     def process(self):
-        #TODO: Think about this...
+        # TODO: Think about this...
         self._writeloop()
         # TODO: Find a better solution
         self._shutdown.set()
