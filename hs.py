@@ -4,7 +4,6 @@ import sys
 import cgi
 import uuid
 import json
-import time  # just for stubs
 import queue
 import socket
 import base64
@@ -36,8 +35,6 @@ class ForwardConnection(object):
         self._addr_family = family
         self._conn = self._connect()
         self._tx_queue = queue.Queue()
-#        self._tx_lock = threading.RLock()
-#        self._tx_seq = 0
         self._tx_thread = threading.Thread(target=self._tx_main)
         self._rx_queue = queue.Queue()
         self._rx_thread = threading.Thread(target=self._rx_main)
@@ -97,7 +94,6 @@ class ForwardConnection(object):
     def put(self, data, seq):
         # UGLY: Ignore sequence numbers for now
         # TODO: To many messages with wrong sequence -> close
-#        with self._tx_lock:
         self._tx_queue.put(dict(data=data, sequence=seq))
 
     def _tx_main(self):
