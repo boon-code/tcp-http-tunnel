@@ -6,6 +6,7 @@ import queue
 import socket
 import base64
 import logging
+import argparse
 import threading
 import socketserver
 import http.client
@@ -195,10 +196,41 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     ctrl = ClientController()
 
 
+def _parseArguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument( '-6'
+                       , dest = 'address_family'
+                       , const = socket.AF_INET6
+                       , action = 'store_const'
+                       )
+    parser.add_argument( '-4'
+                       , dest = 'address_family'
+                       , const = socket.AF_INET
+                       , action = 'store_const'
+                       )
+    parser.add_argument( '--host'
+                       , default = '127.0.0.1'
+                       , help = "hostname or IP address to bind to"
+                       )
+    parser.add_argument( '--port'
+                       , type = int
+                       , default = '7022'
+                       , help = "port to bind to"
+                       )
+    parser.add_argument( 'url'
+                       , help = "URL to send requests to"
+                       )
+    parser.set_defaults( address_family = socket.AF_INET)
+    return parser.parse_args()
+
+
 def clientMain():
     logging.getLogger("requests").setLevel(logging.WARNING)
-    server = ThreadedTCPServer(('::', 7000), ClientInHandler)
-    server.ctrl.setURL('http://127.0.0.1:7080')
+    args = _parseArguments()
+    tcp_server_class = ThreadedTCPServer
+    tcp_server_class.address_family = args.address_family
+    server = ThreadedTCPServer((args.host, args.port), ClientInHandler)
+    server.ctrl.setURL(args.url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
